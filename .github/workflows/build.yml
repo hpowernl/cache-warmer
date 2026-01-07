@@ -1,0 +1,66 @@
+name: Build Cache Warmer
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Linux Binary
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      
+      - name: Download dependencies
+        run: go mod download
+      
+      - name: Build binary
+        run: |
+          CGO_ENABLED=1 go build -ldflags="-s -w" -o cache-warmer cache-warmer.go
+          chmod +x cache-warmer
+      
+      - name: Test binary
+        run: |
+          ./cache-warmer init --force
+          ./cache-warmer status || true
+          echo "Binary built successfully!"
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-warmer-linux-amd64
+          path: cache-warmer
+          retention-days: 30
+      
+      - name: Create release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: cache-warmer
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

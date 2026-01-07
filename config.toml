@@ -1,0 +1,36 @@
+[app]
+# Paths are resolved relative to this config file location.
+db_path = "warmer.db"
+log_file = "logs/cache_warmer.log"
+log_level = "INFO"
+
+# Rewarm URLs if last warm is older than this many hours (unless a flush happened after that warm).
+rewarm_after_hours = 24
+
+# If loop=true, keeps running and re-processes sitemaps every loop_interval_seconds
+loop = true
+loop_interval_seconds = 900
+
+[http]
+user_agent = "CacheWarmer/1.0 (+cachewarmer)"
+timeout_seconds = 20
+connect_timeout_seconds = 10
+max_redirects = 5
+
+# Concurrency / pacing
+concurrency = 8
+min_delay_ms = 50
+
+# Retries
+retries = 2
+retry_backoff_seconds = 1.0
+
+[load]
+# 1-minute load average limit. For 4 CPUs and "must not exceed 3", use 2.0.
+max_load = 2.0
+check_interval_seconds = 2
+
+[sitemaps]
+urls = [
+  "https://www.koicompagnie.nl/sitemaps/sitemap.xml"
+]
