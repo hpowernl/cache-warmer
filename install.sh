@@ -44,9 +44,19 @@ echo ""
 echo "Fetching latest release..."
 LATEST_RELEASE=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
+# Fallback to latest tag if no release exists
 if [ -z "$LATEST_RELEASE" ]; then
-    echo -e "${RED}Error: Could not find latest release${NC}"
-    echo "Ensure a release exists on GitHub."
+    echo "No release found, trying latest tag..."
+    LATEST_RELEASE=$(curl -s "https://api.github.com/repos/$REPO/tags" | grep '"name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+fi
+
+if [ -z "$LATEST_RELEASE" ]; then
+    echo -e "${RED}Error: Could not find latest release or tag${NC}"
+    echo "Ensure a release or tag exists on GitHub."
+    echo ""
+    echo "To create a release:"
+    echo "  git tag -a v1.0.0 -m 'Release v1.0.0'"
+    echo "  git push origin v1.0.0"
     exit 1
 fi
 
