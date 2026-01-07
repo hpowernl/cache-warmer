@@ -1,0 +1,43 @@
+# Binaries
+cache-warmer
+cache-warmer-linux-amd64
+cache-warmer-linux-arm64
+cache-warmer-darwin-amd64
+cache-warmer-darwin-arm64
+*.exe
+
+# Generated files
+config.toml
+warmer.db
+warmer.db-shm
+warmer.db-wal
+checksums.txt
+
+# Logs
+logs/
+*.log
+
+# Go
+*.o
+*.a
+*.so
+
+# Test coverage
+*.out
+coverage.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+

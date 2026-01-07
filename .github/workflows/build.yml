@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    name: Build Linux Binary
+    name: Build Multi-Platform Binaries
     runs-on: ubuntu-latest
     
     steps:
@@ -33,34 +33,105 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
       
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+      
       - name: Download dependencies
         run: go mod download
       
-      - name: Build binary
+      - name: Build Linux AMD64
         run: |
-          CGO_ENABLED=1 go build -ldflags="-s -w" -o cache-warmer cache-warmer.go
-          chmod +x cache-warmer
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o cache-warmer-linux-amd64 cache-warmer.go
+          chmod +x cache-warmer-linux-amd64
       
-      - name: Test binary
+      - name: Build Linux ARM64
         run: |
-          ./cache-warmer init --force
-          ./cache-warmer status || true
-          echo "Binary built successfully!"
+          CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc go build -ldflags="-s -w" -o cache-warmer-linux-arm64 cache-warmer.go
+          chmod +x cache-warmer-linux-arm64
       
-      - name: Upload artifact
+      - name: Install QEMU for ARM64 testing
+        run: |
+          sudo apt-get install -y qemu-user-static
+      
+      - name: Test AMD64 binary
+        run: |
+          ./cache-warmer-linux-amd64 init --force
+          ./cache-warmer-linux-amd64 status || true
+          echo "AMD64 binary tested successfully!"
+          rm -f config.toml warmer.db
+      
+      - name: Test ARM64 binary
+        run: |
+          qemu-aarch64-static -L /usr/aarch64-linux-gnu ./cache-warmer-linux-arm64 init --force
+          qemu-aarch64-static -L /usr/aarch64-linux-gnu ./cache-warmer-linux-arm64 status || true
+          echo "ARM64 binary tested successfully!"
+          rm -f config.toml warmer.db
+      
+      - name: Create checksums
+        run: |
+          sha256sum cache-warmer-linux-amd64 > checksums.txt
+          sha256sum cache-warmer-linux-arm64 >> checksums.txt
+          cat checksums.txt
+      
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cache-warmer-linux-amd64
-          path: cache-warmer
-          retention-days: 30
+          name: cache-warmer-binaries
+          path: |
+            cache-warmer-linux-amd64
+            cache-warmer-linux-arm64
+            checksums.txt
+          retention-days: 90
       
-      - name: Create release (on tag)
+      - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
-          files: cache-warmer
+          files: |
+            cache-warmer-linux-amd64
+            cache-warmer-linux-arm64
+            checksums.txt
           draft: false
           prerelease: false
+          body: |
+            ## Cache Warmer ${{ github.ref_name }}
+            
+            ### 📦 Binaries
+            
+            Download the binary for your platform:
+            
+            - **Linux x86_64 (AMD64)**: `cache-warmer-linux-amd64`
+            - **Linux ARM64**: `cache-warmer-linux-arm64`
+            
+            ### 🚀 Installation
+            
+            ```bash
+            # Download binary (replace VERSION with the tag, e.g. v1.0.0)
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/cache-warmer-linux-amd64
+            
+            # Make executable
+            chmod +x cache-warmer-linux-amd64
+            
+            # Optional: rename to cache-warmer
+            mv cache-warmer-linux-amd64 cache-warmer
+            
+            # Test
+            ./cache-warmer init
+            ./cache-warmer status
+            ```
+            
+            ### 🔐 Checksums
+            
+            Verify the download with `checksums.txt`:
+            ```bash
+            sha256sum -c checksums.txt
+            ```
+            
+            ### 📝 Usage
+            
+            See the [README](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md) for complete documentation.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
