@@ -97,6 +97,7 @@ jobs:
             checksums.txt
           draft: false
           prerelease: false
+          make_latest: true
           body: |
             ## Cache Warmer ${{ github.ref_name }}
             

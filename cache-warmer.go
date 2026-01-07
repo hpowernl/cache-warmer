@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -61,7 +62,7 @@ check_interval_seconds = 2
 
 [sitemaps]
 urls = [
-  "https://www.koicompagnie.nl/sitemaps/sitemap.xml"
+  "https://www.demoshop.nl/sitemap.xml"
 ]
 `
 
@@ -799,11 +800,22 @@ func cmdInit(configPath string, force bool) error {
 		return nil
 	}
 
-	if err := os.WriteFile(configPath, []byte(defaultConfigTOML), 0644); err != nil {
+	// Calculate max_load based on CPU count (CPU - 1, minimum 1.0)
+	numCPU := runtime.NumCPU()
+	maxLoad := float64(numCPU - 1)
+	if maxLoad < 1.0 {
+		maxLoad = 1.0
+	}
+
+	// Replace max_load in template with calculated value
+	config := strings.Replace(defaultConfigTOML, "max_load = 2.0", fmt.Sprintf("max_load = %.1f", maxLoad), 1)
+
+	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
 		return err
 	}
 
 	fmt.Printf("Wrote config template: %s\n", configPath)
+	fmt.Printf("Detected %d CPU(s), set max_load = %.1f\n", numCPU, maxLoad)
 	return nil
 }
 

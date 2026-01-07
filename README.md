@@ -1,4 +1,4 @@
-# Cache Warmer (Go)
+# Cache Warmer base on Sitemap
 
 A fast, native cache warmer written in Go for automatically warming caches via sitemap URLs.
 
@@ -34,39 +34,7 @@ The script will:
 - ✅ Install to the configured directory
 - ✅ Make it immediately usable
 
-### Option 2: Manual Download from GitHub Releases
-
-1. **Go to the [Releases page](https://github.com/hpowernl/cache-warmer/releases/latest)**
-
-2. **Download the binary for your platform:**
-   - Linux x86_64: `cache-warmer-linux-amd64`
-   - Linux ARM64: `cache-warmer-linux-arm64`
-
-3. **Install:**
-   ```bash
-   # Download (replace VERSION with the tag, e.g. v1.0.0)
-   wget https://github.com/hpowernl/cache-warmer/releases/download/VERSION/cache-warmer-linux-amd64
-   
-   # Make executable
-   chmod +x cache-warmer-linux-amd64
-   
-   # Move to PATH (optional)
-   sudo mv cache-warmer-linux-amd64 /usr/local/bin/cache-warmer
-   
-   # Test
-   cache-warmer --help
-   ```
-
-4. **Verify checksum (recommended):**
-   ```bash
-   # Download checksums
-   wget https://github.com/hpowernl/cache-warmer/releases/download/VERSION/checksums.txt
-   
-   # Verify
-   sha256sum -c checksums.txt
-   ```
-
-### Option 3: Build from Source
+### Option 2: Build from Source
 
 ```bash
 # Ensure Go 1.21+ is installed
@@ -231,54 +199,26 @@ All commands accept the `--config path/to/config.toml` flag.
 
 ## 🔧 Production Setup
 
-### With Systemd
-
-Create `/etc/systemd/system/cache-warmer.service`:
-
-```ini
-[Unit]
-Description=Cache Warmer
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/cache-warmer
-ExecStart=/opt/cache-warmer/cache-warmer run
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-```bash
-sudo systemctl enable cache-warmer
-sudo systemctl start cache-warmer
-sudo systemctl status cache-warmer
-```
-
 ### With Supervisor
 
-Create `/etc/supervisor/conf.d/cache-warmer.conf`:
+Create `/data/web/supervisor/cache-warmer.conf`:
 
 ```ini
 [program:cache-warmer]
-command=/opt/cache-warmer/cache-warmer run
-directory=/opt/cache-warmer
+command=/data/web/cache-warmer/cache-warmer run
+directory=/data/web/cache-warmer
 autostart=true
 autorestart=true
-stderr_logfile=/var/log/cache-warmer.err.log
-stdout_logfile=/var/log/cache-warmer.out.log
-user=www-data
+stderr_logfile=/data/web/cache-warmer.err.log
+stdout_logfile=/data/web/cache-warmer.out.log
+user=app
 ```
 
 Reload supervisor:
 ```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl start cache-warmer
+supervisorctl reread
+supervisorctl update
+supervisorctl start cache-warmer
 ```
 
 ## 🐛 Troubleshooting
@@ -335,13 +275,6 @@ The project includes a GitHub Action (`.github/workflows/build.yml`) that automa
 - Uploads binaries as artifacts (kept for 90 days)
 - Creates a GitHub Release for version tags (v1.0.0, etc.)
 
-### Creating a Release
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
 The Action builds automatically and creates a release with the binaries.
 
 ## 📊 Database Schema
@@ -379,37 +312,6 @@ CREATE TABLE meta (
 ## 🤝 Contributing
 
 Improvements and bug fixes are welcome! Open an issue or pull request.
-
-## 🚀 Creating Releases
-
-If you host this tool on GitHub, you can easily create releases:
-
-```bash
-# Create a version tag
-git tag -a v1.0.0 -m "Release v1.0.0"
-
-# Push to GitHub
-git push origin v1.0.0
-```
-
-The GitHub Action builds binaries automatically and creates a release! See [RELEASE.md](RELEASE.md) for details.
-
-### Download Locations
-
-After a release, binaries are available at:
-
-1. **GitHub Releases** (recommended)
-   - `https://github.com/hpowernl/cache-warmer/releases`
-   - Direct download links
-   - Checksums for verification
-
-2. **GitHub Actions Artifacts**
-   - Go to Actions → latest build
-   - Download artifacts (kept for 90 days)
-
-3. **Install Script**
-   - `curl -sSL https://raw.githubusercontent.com/hpowernl/cache-warmer/main/install.sh | bash`
-   - Automatically installs the latest release
 
 ## 📄 License
 

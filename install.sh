@@ -5,7 +5,7 @@ set -e
 # Automatic installation script for the latest release
 
 REPO="hpowernl/cache-warmer"  # Update to your GitHub repo
-INSTALL_DIR="/data/web/cachewarmer"
+INSTALL_DIR="/data/web/cache-warmer"
 BINARY_NAME="cache-warmer"
 
 # Colors for output
