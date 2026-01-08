@@ -322,4 +322,3 @@ MIT License - see [LICENSE](LICENSE) file for details
 For questions or issues:
 - Open a [GitHub Issue](https://github.com/hpowernl/cache-warmer/issues)
 - Check the [Troubleshooting](#-troubleshooting) section
-- See [RELEASE.md](RELEASE.md) for release information

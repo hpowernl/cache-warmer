@@ -44,19 +44,9 @@ echo ""
 echo "Fetching latest release..."
 LATEST_RELEASE=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
-# Fallback to latest tag if no release exists
 if [ -z "$LATEST_RELEASE" ]; then
-    echo "No release found, trying latest tag..."
-    LATEST_RELEASE=$(curl -s "https://api.github.com/repos/$REPO/tags" | grep '"name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-fi
-
-if [ -z "$LATEST_RELEASE" ]; then
-    echo -e "${RED}Error: Could not find latest release or tag${NC}"
-    echo "Ensure a release or tag exists on GitHub."
-    echo ""
-    echo "To create a release:"
-    echo "  git tag -a v1.0.0 -m 'Release v1.0.0'"
-    echo "  git push origin v1.0.0"
+    echo -e "${RED}Error: Could not find latest release${NC}"
+    echo "Ensure a release exists on GitHub."
     exit 1
 fi
 
@@ -86,23 +76,15 @@ fi
 # Make executable
 chmod +x "$TEMP_FILE"
 
-# Check if we need sudo
-if [ -w "$INSTALL_DIR" ]; then
-    SUDO=""
-else
-    SUDO="sudo"
-    echo -e "${YELLOW}Sudo privileges required for installation to $INSTALL_DIR${NC}"
-fi
-
 # Create install directory if it doesn't exist
 if [ ! -d "$INSTALL_DIR" ]; then
     echo "Creating install directory..."
-    $SUDO mkdir -p "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
 fi
 
 # Install binary
 echo "Installing to $INSTALL_DIR/$BINARY_NAME..."
-$SUDO mv "$TEMP_FILE" "$INSTALL_DIR/$BINARY_NAME"
+mv "$TEMP_FILE" "$INSTALL_DIR/$BINARY_NAME"
 
 echo ""
 echo -e "${GREEN}✅ Installation successful!${NC}"
