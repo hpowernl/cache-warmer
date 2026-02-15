@@ -78,6 +78,7 @@ retry_backoff_seconds = 1.0
 # 429 rate limit handling
 rate_limit_cooldown_seconds = 120
 rate_limit_recover_after = 50
+rate_limit_max_429_retries = 10
 
 [load]
 # 1-minute load average limit. For 4 CPUs and "must not exceed 3", use 2.0.
@@ -117,6 +118,7 @@ type HTTPConfig struct {
 	RetryBackoffSeconds       float64 `toml:"retry_backoff_seconds"`
 	RateLimitCooldownSeconds  int     `toml:"rate_limit_cooldown_seconds"`
 	RateLimitRecoverAfter     int     `toml:"rate_limit_recover_after"`
+	RateLimitMax429Retries    int     `toml:"rate_limit_max_429_retries"`
 }
 
 type LoadConfig struct {
@@ -244,13 +246,17 @@ func (w *WarmDB) ShouldWarm(url string, rewarmAfter time.Duration) (bool, error)
 
 func (w *WarmDB) MarkWarmed(url string, status int, errorMsg string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	var errVal interface{}
+	if errorMsg != "" {
+		errVal = errorMsg
+	}
 
 	var count int
 	err := w.db.QueryRow("SELECT warmed_count FROM warmed_url WHERE url = ?", url).Scan(&count)
 
 	if err == sql.ErrNoRows {
 		_, err = w.db.Exec(`INSERT INTO warmed_url(url, last_warmed_utc, last_status, last_error, warmed_count) 
-			VALUES(?,?,?,?,1)`, url, now, status, errorMsg)
+			VALUES(?,?,?,?,1)`, url, now, status, errVal)
 		return err
 	}
 
@@ -259,19 +265,23 @@ func (w *WarmDB) MarkWarmed(url string, status int, errorMsg string) error {
 	}
 
 	_, err = w.db.Exec(`UPDATE warmed_url SET last_warmed_utc=?, last_status=?, last_error=?, warmed_count=warmed_count+1 
-		WHERE url=?`, now, status, errorMsg, url)
+		WHERE url=?`, now, status, errVal, url)
 	return err
 }
 
 func (w *WarmDB) MarkSitemap(sitemapURL string, errorMsg string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	var errVal interface{}
+	if errorMsg != "" {
+		errVal = errorMsg
+	}
 
 	var exists bool
 	err := w.db.QueryRow("SELECT 1 FROM sitemap_seen WHERE sitemap_url = ?", sitemapURL).Scan(&exists)
 
 	if err == sql.ErrNoRows {
 		_, err = w.db.Exec(`INSERT INTO sitemap_seen(sitemap_url, last_fetched_utc, last_error) 
-			VALUES(?,?,?)`, sitemapURL, now, errorMsg)
+			VALUES(?,?,?)`, sitemapURL, now, errVal)
 		return err
 	}
 
@@ -280,7 +290,7 @@ func (w *WarmDB) MarkSitemap(sitemapURL string, errorMsg string) error {
 	}
 
 	_, err = w.db.Exec(`UPDATE sitemap_seen SET last_fetched_utc=?, last_error=? 
-		WHERE sitemap_url=?`, now, errorMsg, sitemapURL)
+		WHERE sitemap_url=?`, now, errVal, sitemapURL)
 	return err
 }
 
@@ -532,6 +542,19 @@ func newRateLimiter(concurrency, cooldownSeconds, recoverAfter int) *rateLimiter
 func (rl *rateLimiter) acquire(ctx context.Context) error {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			rl.mu.Lock()
+			rl.cond.Broadcast()
+			rl.mu.Unlock()
+		case <-done:
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -569,6 +592,22 @@ func (rl *rateLimiter) release() {
 func (rl *rateLimiter) on429(retryAfter time.Duration) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+	now := time.Now()
+	// Debounce: only reduce concurrency once per cooldown period to avoid
+	// aggressive drops when many workers get 429 simultaneously.
+	if now.Before(rl.cooldownUntil) {
+		// Already in cooldown; optionally extend if Retry-After is longer
+		cooldown := retryAfter
+		if cooldown < time.Duration(rl.cooldownSeconds)*time.Second {
+			cooldown = time.Duration(rl.cooldownSeconds) * time.Second
+		}
+		newUntil := now.Add(cooldown)
+		if newUntil.After(rl.cooldownUntil) {
+			rl.cooldownUntil = newUntil
+		}
+		rl.cond.Broadcast()
+		return
+	}
 	newConcurrency := rl.currentConcurrency / 2
 	if newConcurrency < rl.minConcurrency {
 		newConcurrency = rl.minConcurrency
@@ -580,7 +619,7 @@ func (rl *rateLimiter) on429(retryAfter time.Duration) {
 	if cooldown < time.Duration(rl.cooldownSeconds)*time.Second {
 		cooldown = time.Duration(rl.cooldownSeconds) * time.Second
 	}
-	rl.cooldownUntil = time.Now().Add(cooldown)
+	rl.cooldownUntil = now.Add(cooldown)
 	rl.cond.Broadcast()
 	log.Printf("429 rate limit: concurrency reduced %d -> %d, cooldown %.0fs", oldConcurrency, newConcurrency, cooldown.Seconds())
 	if newConcurrency == rl.minConcurrency {
@@ -663,20 +702,36 @@ func NewCacheWarmer(cfg Config, db *WarmDB) *CacheWarmer {
 
 func (c *CacheWarmer) fetchBytes(ctx context.Context, url string) ([]byte, error) {
 	var lastErr error
+	cooldownSec := c.cfg.HTTP.RateLimitCooldownSeconds
+	if cooldownSec <= 0 {
+		cooldownSec = 120
+	}
+	max429Retries := c.cfg.HTTP.RateLimitMax429Retries
+	if max429Retries <= 0 {
+		max429Retries = 10
+	}
+	retries429 := 0
 
 	for attempt := 1; attempt <= c.cfg.HTTP.Retries+1; attempt++ {
+		if err := c.rl.acquire(ctx); err != nil {
+			return nil, err
+		}
+
 		if err := waitForLoad(ctx, c.cfg.Load); err != nil {
+			c.rl.release()
 			return nil, err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
+			c.rl.release()
 			return nil, err
 		}
 		req.Header.Set("User-Agent", c.cfg.HTTP.UserAgent)
 
 		resp, err := c.client.Do(req)
 		if err != nil {
+			c.rl.release()
 			lastErr = err
 			if attempt >= c.cfg.HTTP.Retries+1 {
 				break
@@ -692,6 +747,7 @@ func (c *CacheWarmer) fetchBytes(ctx context.Context, url string) ([]byte, error
 		resp.Body.Close()
 
 		if err != nil {
+			c.rl.release()
 			lastErr = err
 			if attempt >= c.cfg.HTTP.Retries+1 {
 				break
@@ -701,7 +757,26 @@ func (c *CacheWarmer) fetchBytes(ctx context.Context, url string) ([]byte, error
 			continue
 		}
 
+		if resp.StatusCode == httpStatusTooMany {
+			retryAfter429 := parseRetryAfter(resp.Header.Get("Retry-After"), cooldownSec)
+			c.rl.on429(retryAfter429)
+			c.rl.release()
+			if retries429 >= max429Retries {
+				return nil, fmt.Errorf("429 Too Many Requests (exceeded %d retries)", max429Retries)
+			}
+			retries429++
+			log.Printf("429 for %s (retry %d/%d), cooling down %.0fs", url, retries429, max429Retries, retryAfter429.Seconds())
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryAfter429):
+			}
+			attempt-- // Retry without counting against normal retry limit
+			continue
+		}
+
 		if resp.StatusCode >= httpStatusClientErr {
+			c.rl.release()
 			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 			if attempt >= c.cfg.HTTP.Retries+1 {
 				break
@@ -710,6 +785,9 @@ func (c *CacheWarmer) fetchBytes(ctx context.Context, url string) ([]byte, error
 			time.Sleep(backoff)
 			continue
 		}
+
+		c.rl.onSuccess()
+		c.rl.release()
 
 		// Decompress if .gz
 		if strings.HasSuffix(strings.ToLower(url), ".gz") {
@@ -805,8 +883,12 @@ func (c *CacheWarmer) warmOne(ctx context.Context, url string) (status int, errM
 	if cooldownSec <= 0 {
 		cooldownSec = 120
 	}
+	max429Retries := c.cfg.HTTP.RateLimitMax429Retries
+	if max429Retries <= 0 {
+		max429Retries = 10
+	}
 
-	for {
+	for retries429 := 0; retries429 < max429Retries; retries429++ {
 		select {
 		case <-ctx.Done():
 			return 0, ctx.Err().Error(), false
@@ -878,6 +960,11 @@ func (c *CacheWarmer) warmOne(ctx context.Context, url string) (status int, errM
 			// Release slot before cooldown to restore invariant activeWorkers <= currentConcurrency.
 			// Otherwise we could have activeWorkers=8 and currentConcurrency=4, starving new workers.
 			c.rl.release()
+			if retries429 >= max429Retries-1 {
+				// Exhausted 429 retries; treat as permanent failure
+				return httpStatusTooMany,
+					fmt.Sprintf("429 Too Many Requests (exceeded %d retries)", max429Retries), true
+			}
 			select {
 			case <-ctx.Done():
 				// Caller must not release again — we already did.
@@ -895,6 +982,8 @@ func (c *CacheWarmer) warmOne(ctx context.Context, url string) (status int, errM
 		}
 		return 0, "unreachable", false
 	}
+	// Exhausted 429 retries without getting past the got429 block (should not reach)
+	return httpStatusTooMany, fmt.Sprintf("429 Too Many Requests (exceeded %d retries)", max429Retries), false
 }
 
 func (c *CacheWarmer) runOnce(ctx context.Context) (int, int, error) {
@@ -1337,6 +1426,9 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.HTTP.RetryBackoffSeconds < 0 {
 		return fmt.Errorf("http.retry_backoff_seconds must be >= 0, got %f", cfg.HTTP.RetryBackoffSeconds)
+	}
+	if cfg.HTTP.RateLimitMax429Retries < 0 {
+		return fmt.Errorf("http.rate_limit_max_429_retries must be >= 0, got %d", cfg.HTTP.RateLimitMax429Retries)
 	}
 
 	// App validation
