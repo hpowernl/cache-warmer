@@ -13,6 +13,7 @@ A fast, native cache warmer written in Go for automatically warming caches via s
 - 🗺️ **Sitemap Support**: Including nested sitemaps and .gz compression
 - ⚙️ **Configurable**: TOML configuration file
 - 📈 **Cache Flush Tracking**: Mark cache flushes for re-warming
+- 🛡️ **429 Rate Limit Handling**: Adaptive concurrency reduction on HTTP 429, applies to both sitemap fetching and URL warming
 
 ## 📦 Installation
 
@@ -87,6 +88,11 @@ concurrency = 8
 min_delay_ms = 50
 retries = 2
 retry_backoff_seconds = 1.0
+
+# 429 rate limit handling (adaptive concurrency)
+rate_limit_cooldown_seconds = 120
+rate_limit_recover_after = 50
+rate_limit_max_429_retries = 10
 
 [load]
 max_load = 2.0
@@ -189,6 +195,9 @@ All commands accept the `--config path/to/config.toml` flag.
 - `min_delay_ms`: Minimum delay between requests (rate limiting)
 - `retries`: Number of retry attempts on failures
 - `retry_backoff_seconds`: Backoff multiplier for retries
+- `rate_limit_cooldown_seconds`: Cooldown duration after 429 (default: 120)
+- `rate_limit_recover_after`: Consecutive successes needed before increasing concurrency again (default: 50)
+- `rate_limit_max_429_retries`: Max retries per URL on 429 before giving up (default: 10)
 
 ### [load]
 - `max_load`: Maximum 1-minute load average (CPU protection)
@@ -246,6 +255,7 @@ CGO_ENABLED=1 go build -o cache-warmer cache-warmer.go
 - Check firewall/IP whitelist
 - Increase timeout in config
 - Check server logs for rate limiting
+- If you see many 429 errors: the rate limiter will automatically reduce concurrency; increase `rate_limit_max_429_retries` if URLs are being marked failed too quickly
 
 ### Warmer is slow
 
